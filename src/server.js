@@ -1,8 +1,7 @@
-const net = require("net");
+import net from "node:net";
 
-const HOST = process.env.HOST || "127.0.0.1";
 const PORT = Number(process.env.PORT) || 3000;
-const BASE_URL = `http://${HOST}:${PORT}`;
+const BASE_URL = `http://localhost:${PORT}`;
 
 const HEADERS_END = "\r\n\r\n";
 const MAX_HEADER_SIZE = 8 * 1024;
@@ -32,11 +31,10 @@ const server = net.createServer((socket) => {
     handled = true;
     const head = buffer.subarray(0, end).toString("latin1");
 
-    console.log("Received request head:", head);
+    const req = parseHead(head);
 
-    socket.end(
-      "HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
-    );
+    console.log("Parsed request:", req);
+    socket.end(router(req));
   });
 
   socket.on("end", () => {
@@ -48,10 +46,70 @@ const server = net.createServer((socket) => {
   });
 });
 
-server.listen(PORT, HOST, () => {
+server.listen(PORT, () => {
   console.log(`Server listening on ${BASE_URL}`);
 });
 
 server.on("error", (err) => {
   console.error(`Server error: ${err.message}`);
 });
+
+//
+// Helper functions for parsing, routing, response template.
+//
+
+function res(status, statusText, body = "") {
+  const bodyBuffer = Buffer.from(body, "latin1");
+  const head =
+    `HTTP/1.1 ${status} ${statusText}\r\n` +
+    `Content-Type: text/plain; charset=utf-8\r\n` +
+    `Content-Length: ${bodyBuffer.length}\r\n` +
+    `Connection: close\r\n` +
+    `\r\n`;
+
+  return Buffer.concat([Buffer.from(head, "latin1"), bodyBuffer]);
+}
+
+function router(req) {
+  if (!req) return res(400, "Bad Request", "Bad Request\n");
+
+  const pathname = req.route.split("?")[0];
+
+  if (req.method === "GET" && pathname === "/") {
+    return res(200, "OK", "Hello from raw HTTP\n");
+  }
+
+  if (req.method === "GET" && pathname === "/headers") {
+    const body =
+      Object.entries(req.headers)
+        .map(([key, value]) => `${key}: ${value}`)
+        .join("\n") + "\n";
+
+    return res(200, "OK", body);
+  }
+
+  return res(404, "Not Found", "Not Found\n");
+}
+
+function parseHead(head) {
+  const [requestLine, ...headerLines] = head.split("\r\n");
+
+  const parts = requestLine.split(" ");
+
+  if (parts.length !== 3 || !parts[2].startsWith("HTTP/")) return null;
+  const [method, route, version] = parts;
+
+  const headers = {};
+
+  for (const line of headerLines) {
+    const i = line.indexOf(":");
+
+    if (i === -1) continue;
+
+    const key = line.slice(0, i).trim().toLowerCase();
+
+    headers[key] = line.slice(i + 1).trim();
+  }
+
+  return { method, route, version, headers };
+}
